@@ -103,7 +103,7 @@ class Salesforce:
 	def limits(self) -> dict[str, Any]:
 		return self.request('GET', url=f'{self.base_url}limits/')['DailyApiRequests']
 
-	def query_sobject(
+	def get(
 		self,
 		sobject: str,
 		columns: list[str] | None = None,
