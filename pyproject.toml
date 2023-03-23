@@ -20,7 +20,8 @@ classifiers = [
 dependencies = [
 	"pydantic",
 	"SQLAlchemy==1.4.46",
-	"psycopg2-binary"
+	"psycopg2-binary",
+	"requests",
 ]
 
 [project.urls]
