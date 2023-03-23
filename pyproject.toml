@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "revtron"
+version = "0.0.1"
+authors = [
+  { name="Revtron Inc.", email="tomas@ditat.io" },
+]
+license = {file = "LICENSE"}
+description = "Revtron Utils"
+readme = {file = "README.md", content-type = "text/markdown"}
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+	"pydantic",
+	"SQLAlchemy==1.4.46",
+	"psycopg2"
+]
+
+[project.urls]
+"Homepage" = "https://github.com/ditat-llc/revtron-utils"
+
+[project.scripts]
