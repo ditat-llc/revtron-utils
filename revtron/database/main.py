@@ -20,7 +20,6 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.schema import CreateTable
 from sqlalchemy.inspection import inspect as sa_inspect
-from sqlalchemy.sql.expression import ClauseElement
 
 
 
