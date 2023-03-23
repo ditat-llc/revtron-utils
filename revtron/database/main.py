@@ -20,8 +20,8 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.schema import CreateTable
 from sqlalchemy.inspection import inspect as sa_inspect
+from sqlalchemy.sql.expression import ClauseElement
 
-# from .mappings import sqlalchemy_to_postgres
 
 
 class Database:
@@ -85,6 +85,37 @@ class Database:
 	def get_views(self, schema: str | None = None) -> list[str]:
 		return sa_inspect(self.engine).get_view_names(schema=schema or self.schema)
 
+	def upsert(
+		self,
+		table_name: str,
+		data: dict | list[dict],
+		chunk_size: int = 1_000,
+		verbose: bool = False,
+		overwrite_with_null: bool = False,
+	) -> list[dict] | dict:
+		table = self.get_table(table_name)
+		index = [key.name for key in sa_inspect(table).primary_key]
+		if not index:
+			raise Exception(f'No primary key found for table {table_name}')
+		chunks = [data[i:i + chunk_size] for i in range(0, len(data), chunk_size)]\
+			if isinstance(data, list) else [[data]]
+		results = []
+		for number, chunk in enumerate(chunks):
+			if verbose:
+				print(f'Loading chunk {number + 1} of {len(chunks)}')
+			stmt = insert(table).values(chunk).returning(*[table.c[c] for c in index])
+			stmt = stmt.on_conflict_do_update(
+				index_elements=index,
+				set_={
+					k: (stmt.excluded[k] if overwrite_with_null else \
+					func.coalesce(stmt.excluded[k], table.c[k])) for k in chunk[0].keys()
+				}
+			)
+			with self.engine.connect() as conn:
+				res = conn.execute(stmt)
+			results.extend([r._asdict() for r in res.fetchall()])
+		return results[0] if isinstance(data, dict) else results
+
 	def create_table(
 		self,
 		table_name: str,
@@ -141,9 +172,11 @@ class Database:
 		column_type: Any,
 		verbose: bool = False,
 	):
+		column_type = column_type() if isinstance(column_type, type) else column_type
+		dialect_type = column_type.dialect_impl(self.engine.dialect)
 		query = f'''
 			ALTER TABLE {self.schema}."{table_name}"
-			ADD COLUMN "{column_name}" {sqlalchemy_to_postgres[column_type]}
+			ADD COLUMN "{column_name}" {dialect_type}
 			;
 		'''
 		if verbose:
@@ -151,30 +184,60 @@ class Database:
 		with self.engine.connect() as conn:
 			conn.execute(query)
 
-	def upsert(
+	def _where_clause(self, stmt: Any, table: Table, where: list[dict] | dict):
+		where = [where] if isinstance(where, dict) else where
+		for w in where:
+			for k, v in w.items():
+				if isinstance(v, dict):
+					if v['operator'].lower() == 'in':
+						stmt = stmt.where(table.c[k].in_(v['value']))
+					elif v['operator'].lower() == 'not in':
+						stmt = stmt.where(table.c[k].notin_(v['value']))
+					elif v['operator'].lower() == 'like':
+						stmt = stmt.where(table.c[k].like(v['value']))
+					elif v['operator'].lower() == 'not like':
+						stmt = stmt.where(table.c[k].notlike(v['value']))
+					elif v['operator'].lower() == 'is null':
+						stmt = stmt.where(table.c[k].is_(None))
+					elif v['operator'].lower() == 'is not null':
+						stmt = stmt.where(table.c[k].isnot(None))
+					elif v['operator'].lower() == 'between':
+						stmt = stmt.where(table.c[k].between(v['value'][0], v['value'][1]))
+					elif v['operator'].lower() == 'not between':
+						stmt = stmt.where(~table.c[k].between(v['value'][0], v['value'][1]))
+					else:
+						stmt = stmt.where(table.c[k].op(v['operator'])(v['value']))
+				else:
+					stmt = stmt.where(table.c[k] == v)
+		return stmt
+
+	def get(
 		self,
 		table_name: str,
-		data: dict | list[dict],
-		chunk_size: int = 1_000,
+		columns: list[str] | None = None,
+		where: list[dict] | dict | None = None,
+		limit: int | None = None,
+		offset: int | None = None,
+		sort_by: str | None = None,
 		verbose: bool = False,
 	) -> list[dict]:
 		table = self.get_table(table_name)
-		index = [key.name for key in sa_inspect(table).primary_key]
-		chunks = [data[i:i + chunk_size] for i in range(0, len(data), chunk_size)]\
-			if isinstance(data, list) else [data]
+		stmt = select([table.c[c] for c in columns] if columns else table.c)
+		if where:
+			stmt = self._where_clause(stmt, table, where)
+		if offset:
+			stmt = stmt.offset(offset)
+		if sort_by:
+			stmt = stmt.order_by(sort_by)
+		if limit:
+			stmt = stmt.limit(limit)
 		results = []
-		for number, chunk in enumerate(chunks):
-			if verbose:
-				print(f'Loading chunk {number + 1} of {len(chunks)}')
-			stmt = insert(table).values(chunk).returning(*[table.c[c] for c in index])
-			set_values = chunk[0].keys() if isinstance(chunk, list) else chunk.keys()
-			stmt = stmt.on_conflict_do_update(
-				index_elements=index,
-				set_={k: func.coalesce(stmt.excluded[k], table.c[k]) for k in set_values}
-			)
-			with self.engine.connect() as conn:
-				res = conn.execute(stmt)
-			results.extend([r._asdict() for r in res.fetchall()])
+		with self.engine.connect() as conn:
+			for row in conn.execute(stmt).mappings():
+				results.append(dict(row))
+		if verbose:
+			stmt = stmt.compile(self.engine)
+			print(stmt)
 		return results
 
 	def update(
@@ -198,52 +261,6 @@ class Database:
 			res = conn.execute(stmt, data)
 		return res.rowcount
 
-	def get(
-		self,
-		table_name: str,
-		columns: list[str] | None = None,
-		where: list[dict] | dict | None = None,
-		limit: int | None = None,
-		offset: int | None = None,
-		sort_by: str | None = None,
-		verbose: bool = False,
-	) -> list[dict]:
-		table = self.get_table(table_name)
-		stmt = select([table.c[c] for c in columns] if columns else table.c)
-		if where:
-			where = [where] if isinstance(where, dict) else where
-			for w in where:
-				for k, v in w.items():
-					if isinstance(v, dict):
-						if v['operator'].lower() == 'in':
-							stmt = stmt.where(table.c[k].in_(v['value']))
-						elif v['operator'].lower() == 'not in':
-							stmt = stmt.where(table.c[k].notin_(v['value']))
-						elif v['operator'].lower() == 'between':
-							stmt = stmt.where(table.c[k].between(v['value'][0], v['value'][1]))
-						elif v['operator'].lower() == 'not between':
-							stmt = stmt.where(~table.c[k].between(v['value'][0], v['value'][1]))
-						else:
-							stmt = stmt.where(table.c[k].op(v['operator'])(v['value']))
-					elif isinstance(v, list):
-						stmt = stmt.where(table.c[k].in_(v))
-					else:
-						stmt = stmt.where(table.c[k] == v)
-		if offset:
-			stmt = stmt.offset(offset)
-		if sort_by:
-			stmt = stmt.order_by(sort_by)
-		if limit:
-			stmt = stmt.limit(limit)
-		results = []
-		with self.engine.connect() as conn:
-			for row in conn.execute(stmt).mappings():
-				results.append(dict(row))
-		if verbose:
-			stmt = stmt.compile(self.engine)
-			print(stmt)
-		return results
-
 	def delete(
 		self,
 		table_name: str,
@@ -253,13 +270,7 @@ class Database:
 		table = self.get_table(table_name)
 		stmt = delete(table)
 		if where:
-			for k, v in where.items():
-				if isinstance(v, dict):
-					stmt = stmt.where(table.c[k].op(v['operator'])(v['value']))
-				elif isinstance(v, list):
-					stmt = stmt.where(table.c[k].in_(v))
-				else:
-					stmt = stmt.where(table.c[k] == v)
+			stmt = self._where_clause(stmt, table, where)
 		if verbose:
 			stmt = stmt.compile(self.engine)
 			print(stmt)
