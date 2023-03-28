@@ -16,6 +16,7 @@ from sqlalchemy import (
 	update,
 	bindparam,
 	ForeignKey,
+	Index,
 )
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.schema import CreateTable
@@ -121,6 +122,7 @@ class Database:
 		mappings: list[ColumnModel],
 		primary_key: str | list[str] | None = None,
 		unique_columns: list[str] | None = None,
+		indexes: list[str] | None = None,
 		check_existing: bool = True,
 		verbose: bool = False,
 	) -> None:
@@ -155,6 +157,9 @@ class Database:
 			if unique_columns:
 				for column in unique_columns:
 					args.append(UniqueConstraint(column))
+			if indexes:
+				for column in indexes:
+					args.append(Index(f'{table_name}_{column}_idx', column))
 			table = Table(table_name, MetaData(), schema=self.schema, *args)
 			table.create(self.engine, checkfirst=check_existing)
 			if verbose:
