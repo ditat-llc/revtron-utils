@@ -176,11 +176,11 @@ class Database:
 		column_type: Any,
 		verbose: bool = False,
 	):
-		column_type = column_type() if isinstance(column_type, type) else column_type
-		dialect_type = column_type.dialect_impl(self.engine.dialect)
+		new_column = Column(column_name, column_type)
+		dialect_type = new_column.type.compile(self.engine.dialect)
 		query = f'''
 			ALTER TABLE {self.schema}."{table_name}"
-			ADD COLUMN "{column_name}" {dialect_type}
+			ADD COLUMN "{new_column.name}" {dialect_type}
 			;
 		'''
 		if verbose:
