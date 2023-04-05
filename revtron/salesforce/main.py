@@ -231,19 +231,20 @@ class Salesforce:
 			url += f'/{Id}'
 		return self.request(method, url=url, json=kwargs)
 
-	def _bulk_upsert(self, sobject: str, records: list[dict] | dict) -> list[dict]:
-		records = records if isinstance(records, list) else [records]
+	def _bulk_upsert(self, sobject: str, records: list[dict] | dict) -> list[dict] | dict:
+		if isinstance(records, dict):
+			return self._upsert(sobject, **records)
 		with ThreadPoolExecutor(max_workers=min(100, len(records))) as executor:
 			result = executor.map(lambda r: self._upsert(sobject, **r), records)
 		return list(result)
 
-	def update(self, sobject: str, records: dict | list[dict]) -> list[str]:
+	def update(self, sobject: str, records: dict | list[dict]) -> list[str] | str:
 		self._bulk_upsert(sobject, records)
-		return [r['Id'] for r in records]
+		return records['Id'] if isinstance(records, dict) else [r['Id'] for r in records]
 
-	def insert(self, sobject: str, records: dict | list[dict]) -> list[str]:
+	def insert(self, sobject: str, records: dict | list[dict]) -> list[str] | str:
 		resp = self._bulk_upsert(sobject, records)
-		return [r['id'] for r in resp]
+		return [r['id'] for r in resp] if isinstance(resp, list) else resp['id']
 
 
 if __name__ == '__main__':
