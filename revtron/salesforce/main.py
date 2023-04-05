@@ -1,7 +1,6 @@
 import inspect
 from datetime import datetime, timedelta
 from typing import Any
-from pydantic import BaseModel, Extra
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
@@ -12,14 +11,6 @@ class Salesforce:
 	DATETIME_FORMAT = '%Y-%m-%dT%H:%M:%S.%f+0000'
 	DATE_FORMAT = '%Y-%m-%d'
 
-	class UpdateModel(BaseModel):
-		Id: str
-		class Config:
-			extra = Extra.allow
-
-	class InsertModel(BaseModel):
-		class Config:
-			extra = Extra.allow
 
 	def __init__(self, session_id: str, client_id: str, client_secret: str):
 		self.session_id = session_id
@@ -240,21 +231,18 @@ class Salesforce:
 			url += f'/{Id}'
 		return self.request(method, url=url, json=kwargs)
 
-	def _bulk_upsert(self, sobject: str, records: list[InsertModel] | list[UpdateModel]) -> list[dict]:
+	def _bulk_upsert(self, sobject: str, records: list[dict] | dict) -> list[dict]:
+		records = records if isinstance(records, list) else [records]
 		with ThreadPoolExecutor(max_workers=min(100, len(records))) as executor:
-			result = executor.map(lambda r: self._upsert(sobject, **r.dict()), records)
+			result = executor.map(lambda r: self._upsert(sobject, **r), records)
 		return list(result)
 
 	def update(self, sobject: str, records: dict | list[dict]) -> list[str]:
-		records = records if isinstance(records, list) else [records]
-		rs = [self.UpdateModel(**r) for r in records]
-		self._bulk_upsert(sobject, rs)
-		return [r.Id for r in rs]
+		self._bulk_upsert(sobject, records)
+		return [r['Id'] for r in records]
 
 	def insert(self, sobject: str, records: dict | list[dict]) -> list[str]:
-		records = records if isinstance(records, list) else [records]
-		rs = [self.InsertModel(**r) for r in records]
-		resp = self._bulk_upsert(sobject, rs)
+		resp = self._bulk_upsert(sobject, records)
 		return [r['id'] for r in resp]
 
 
