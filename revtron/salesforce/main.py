@@ -1,7 +1,8 @@
-
 import inspect
 from datetime import datetime, timedelta
 from typing import Any
+from pydantic import BaseModel, Extra
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
@@ -10,6 +11,15 @@ class Salesforce:
 	VERSION = 'v56.0'
 	DATETIME_FORMAT = '%Y-%m-%dT%H:%M:%S.%f+0000'
 	DATE_FORMAT = '%Y-%m-%d'
+
+	class UpdateModel(BaseModel):
+		Id: str
+		class Config:
+			extra = Extra.allow
+
+	class InsertModel(BaseModel):
+		class Config:
+			extra = Extra.allow
 
 	def __init__(self, session_id: str, client_id: str, client_secret: str):
 		self.session_id = session_id
@@ -218,21 +228,34 @@ class Salesforce:
 			'limit': limit,
 		}
 
-	def update(self, sobject: str, Id: str, **kwargs) -> tuple[str, str]:
-		self.request(
-			'PATCH',
-			url=f'{self.base_url}sobjects/{sobject}/{Id}',
-			json=kwargs
-		)
-		return (sobject, Id)
+	def _upsert(
+		self,
+		sobject: str,
+		Id: str | None = None,
+		**kwargs
+	) -> dict:
+		method = 'PATCH' if Id is not None else 'POST'
+		url = f'{self.base_url}sobjects/{sobject}'
+		if Id is not None:
+			url += f'/{Id}'
+		return self.request(method, url=url, json=kwargs)
 
-	def insert(self, sobject: str, **kwargs) -> tuple[str, str]:
-		resp = self.request(
-			'POST',
-			url=f'{self.base_url}sobjects/{sobject}',
-			json=kwargs
-		)
-		return (sobject, resp['id'])
+	def _bulk_upsert(self, sobject: str, records: list[InsertModel] | list[UpdateModel]) -> list[dict]:
+		with ThreadPoolExecutor(max_workers=min(100, len(records))) as executor:
+			result = executor.map(lambda r: self._upsert(sobject, **r.dict()), records)
+		return list(result)
+
+	def update(self, sobject: str, records: dict | list[dict]) -> list[str]:
+		records = records if isinstance(records, list) else [records]
+		rs = [self.UpdateModel(**r) for r in records]
+		self._bulk_upsert(sobject, rs)
+		return [r.Id for r in rs]
+
+	def insert(self, sobject: str, records: dict | list[dict]) -> list[str]:
+		records = records if isinstance(records, list) else [records]
+		rs = [self.InsertModel(**r) for r in records]
+		resp = self._bulk_upsert(sobject, rs)
+		return [r['id'] for r in resp]
 
 
 if __name__ == '__main__':
