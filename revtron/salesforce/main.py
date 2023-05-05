@@ -192,6 +192,7 @@ class Salesforce:
         end_date: datetime | None = None,
         date_field: str = 'LastModifiedDate',
         limit: int | None = None,
+        **kwargs
     ) -> dict[str, int | str | None]:
         query = f'SELECT COUNT(Id), MIN({date_field}), MAX({date_field}) FROM {sobject}'
         if date_window is not None:
@@ -201,6 +202,16 @@ class Salesforce:
         if end_date is not None:
             operator = 'AND' if start_date is not None else 'WHERE'
             query += f' {operator} {date_field} <= {end_date.strftime(self.DATETIME_FORMAT)}'
+        if kwargs:
+            for key, value in kwargs.items():
+                operator = 'IN' if isinstance(value, list) else '='
+                if operator == 'IN':
+                    value = tuple(value) if len(value) > 1 else f"('{value[0]}')"
+                else:
+                    value = f"'{value}'"
+                query += f' AND {key} {operator} {value}'
+        if ' WHERE ' not in query and ' AND ' in query:
+            query = query.replace(' AND ', ' WHERE ', 1)
         resp = self.request(
             'GET',
             url=f'{self.base_url}{"queryAll" if include_deleted else "query"}',
