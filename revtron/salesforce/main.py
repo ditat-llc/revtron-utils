@@ -11,7 +11,6 @@ class Salesforce:
     DATETIME_FORMAT = '%Y-%m-%dT%H:%M:%S.%f+0000'
     DATE_FORMAT = '%Y-%m-%d'
 
-
     def __init__(self, session_id: str, client_id: str, client_secret: str):
         self.session_id = session_id
         self.client_id = client_id
@@ -191,7 +190,6 @@ class Salesforce:
         start_date: datetime | None = None,
         end_date: datetime | None = None,
         date_field: str = 'LastModifiedDate',
-        limit: int | None = None,
         **kwargs
     ) -> dict[str, int | str | None]:
         query = f'SELECT COUNT(Id), MIN({date_field}), MAX({date_field}) FROM {sobject}'
@@ -217,7 +215,7 @@ class Salesforce:
             url=f'{self.base_url}{"queryAll" if include_deleted else "query"}',
             params={'q': query}
         )['records'][0]
-        rows = min(limit, resp['expr0']) if limit is not None else resp['expr0']
+        rows = resp['expr0']
         min_date = resp['expr1']
         max_date = resp['expr2']
         columns = len(self.get_sobject_columns(sobject))
@@ -254,7 +252,7 @@ class Salesforce:
     def _bulk_upsert(self, sobject: str, records: list[dict] | dict) -> list[dict] | dict:
         if isinstance(records, dict):
             return self._upsert(sobject, **records)
-        with ThreadPoolExecutor(max_workers=min(100, len(records))) as executor:
+        with ThreadPoolExecutor(max_workers=max(1, min(100, len(records)))) as executor:
             result = executor.map(lambda r: self._upsert(sobject, **r), records)
         return list(result)
 
