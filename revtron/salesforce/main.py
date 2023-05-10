@@ -225,7 +225,6 @@ class Salesforce:
             'columns': columns,
             'min_date': min_date,
             'max_date': max_date,
-            'limit': limit,
         }
 
     def _upsert(
