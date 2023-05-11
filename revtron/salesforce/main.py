@@ -191,7 +191,7 @@ class Salesforce:
         end_date: datetime | None = None,
         date_field: str = 'LastModifiedDate',
         **kwargs
-    ) -> dict[str, int | str | None]:
+    ) -> dict[str, Any]:
         query = f'SELECT COUNT(Id), MIN({date_field}), MAX({date_field}) FROM {sobject}'
         if date_window is not None:
             start_date = datetime.now() - timedelta(days=date_window)
